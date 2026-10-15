@@ -3,8 +3,9 @@
 # The migration that gives existing installs the 1-second quiet Limine
 # boot: a stock (commented) timeout is replaced, a timeout the user set
 # is left alone, quiet is added wherever missing, and a second run
-# changes nothing. A changed menu is rebuilt into the boot image once, so
-# Secure Boot's enrolled checksum still matches it.
+# changes nothing. The menu is rebuilt into the boot image, so Secure
+# Boot's enrolled checksum still matches it, and a failed rebuild is
+# retried on the next run.
 
 set -euo pipefail
 
@@ -37,7 +38,6 @@ grep -Fxq 'quiet: yes' "$conf" || fail "stock boot menu did not get quiet boot"
 run_migration
 [[ $(grep -c '^timeout:' "$conf") == 1 && $(grep -c '^quiet:' "$conf") == 1 ]] ||
   fail "migration is not idempotent"
-[[ $(rebuild_count) == 1 ]] || fail "a second run rebuilt the boot image again"
 pass "stock boot menu gets the 1 second quiet boot, once"
 
 printf 'timeout: 5\ndefault_entry: 2\n' >"$conf"
@@ -63,16 +63,16 @@ printf 'timeout: 1\nquiet: yes\n' >"$conf"
 before=$(cat "$conf")
 run_migration
 [[ $(cat "$conf") == "$before" ]] || fail "an already quiet fast boot was changed"
-rm -f "$rebuilds"
-run_migration
-[[ $(rebuild_count) == 0 ]] || fail "an untouched boot menu was rebuilt"
 pass "an already quiet fast boot is left alone"
 
 printf '#timeout: 3\n' >"$conf"
+rm -f "$rebuilds"
 if REBUILD_STATUS=1 run_migration; then
   fail "a failed boot image rebuild was reported as a successful migration"
 fi
-pass "a failed boot image rebuild leaves the migration pending"
+run_migration
+[[ $(rebuild_count) == 2 ]] || fail "the retry after a failed rebuild did not rebuild the boot image"
+pass "a failed boot image rebuild leaves the migration pending, and the retry rebuilds"
 
 rm -f "$conf"
 run_migration
