@@ -3,7 +3,8 @@
 # The migration that gives existing installs the 1-second quiet Limine
 # boot: a stock (commented) timeout is replaced, a timeout the user set
 # is left alone, quiet is added wherever missing, and a second run
-# changes nothing.
+# changes nothing. A changed menu is rebuilt into the boot image once, so
+# Secure Boot's enrolled checksum still matches it.
 
 set -euo pipefail
 
@@ -16,19 +17,27 @@ stub_bin="$test_dir/bin"
 mkdir -p "$stub_bin"
 printf '#!/bin/bash\n[[ ${SUDO_DENY:-} == 1 && ${1:-} == -v ]] && exit 1\n[[ ${1:-} == -v ]] && exit 0\nexec "$@"\n' >"$stub_bin/sudo"
 chmod +x "$stub_bin/sudo"
+rebuilds="$test_dir/rebuilds"
+printf '#!/bin/bash\necho run >>"%s"\nexit "${REBUILD_STATUS:-0}"\n' "$rebuilds" >"$stub_bin/limine-mkinitcpio"
+chmod +x "$stub_bin/limine-mkinitcpio"
+rebuild_count() {
+  if [[ -f $rebuilds ]]; then wc -l <"$rebuilds"; else echo 0; fi
+}
 
 conf="$test_dir/limine.conf"
 run_migration() {
-  PATH="$stub_bin:$PATH" OMARCHY_LIMINE_CONF="$conf" bash -euo pipefail "$migration" >/dev/null
+  PATH="$stub_bin:$ROOT/bin:$PATH" OMARCHY_LIMINE_CONF="$conf" bash -euo pipefail "$migration" >/dev/null
 }
 
 printf '### Read more\n#timeout: 3\ndefault_entry: 2\n' >"$conf"
 run_migration
+[[ $(rebuild_count) == 1 ]] || fail "a changed boot menu was not rebuilt into the boot image"
 grep -Fxq 'timeout: 1' "$conf" || fail "stock boot menu did not get the 1 second timeout"
 grep -Fxq 'quiet: yes' "$conf" || fail "stock boot menu did not get quiet boot"
 run_migration
 [[ $(grep -c '^timeout:' "$conf") == 1 && $(grep -c '^quiet:' "$conf") == 1 ]] ||
   fail "migration is not idempotent"
+[[ $(rebuild_count) == 1 ]] || fail "a second run rebuilt the boot image again"
 pass "stock boot menu gets the 1 second quiet boot, once"
 
 printf 'timeout: 5\ndefault_entry: 2\n' >"$conf"
@@ -54,7 +63,16 @@ printf 'timeout: 1\nquiet: yes\n' >"$conf"
 before=$(cat "$conf")
 run_migration
 [[ $(cat "$conf") == "$before" ]] || fail "an already quiet fast boot was changed"
+rm -f "$rebuilds"
+run_migration
+[[ $(rebuild_count) == 0 ]] || fail "an untouched boot menu was rebuilt"
 pass "an already quiet fast boot is left alone"
+
+printf '#timeout: 3\n' >"$conf"
+if REBUILD_STATUS=1 run_migration; then
+  fail "a failed boot image rebuild was reported as a successful migration"
+fi
+pass "a failed boot image rebuild leaves the migration pending"
 
 rm -f "$conf"
 run_migration
