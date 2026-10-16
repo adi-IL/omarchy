@@ -37,7 +37,8 @@ SOCKET="$XDG_RUNTIME_DIR/hypr/$HYPRLAND_INSTANCE_SIGNATURE/.socket2.sock"
 
 # Open Hyprland's event stream before spawning anything, so a terminal that maps
 # quickly can't emit its openwindow event before we are listening for it.
-exec {events}< <(socat -U - "UNIX-CONNECT:$SOCKET")
+# -d0 limits socat's log to errors, so the waiter killing it below prints nothing.
+exec {events}< <(socat -d0 -U - "UNIX-CONNECT:$SOCKET")
 socat_pid=$!
 
 # hypr_exec is async and a new window maps on whatever monitor is focused at that
